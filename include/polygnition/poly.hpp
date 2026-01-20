@@ -1,6 +1,9 @@
 #pragma once
 #include <array>
 #include <cstddef>
+#include <iterator>
+#include <numeric>
+#include <utility>
 #include <tuple>
 #include <type_traits>
 
@@ -29,7 +32,30 @@ struct polynomial_t : std::array<T, static_cast<std::size_t>(N + 1)> {
                ? T{}
                : (*this)[static_cast<std::size_t>(N - degree_index)];
   }
+
+  template <typename X>
+  [[nodiscard]] constexpr auto operator()(X const &x) const;
 };
+
+// Horner starts from the leading coefficient, so the return type need only model
+// the coefficient-variable product rather than construction from an integer zero.
+template <typename T, int N, typename X>
+[[nodiscard]] constexpr auto evaluate_horner(polynomial_t<T, N> const &p,
+                                             X const &x) {
+  using result_t = decltype(std::declval<T>() * std::declval<X>());
+  return std::accumulate(std::next(p.begin()), p.end(),
+                         static_cast<result_t>(p[0]),
+                         [&](auto const &accum, auto const &coefficient) {
+                           return (accum * x) + coefficient;
+                         });
+}
+
+template <typename T, int N>
+  requires(N >= 0)
+template <typename X>
+[[nodiscard]] constexpr auto polynomial_t<T, N>::operator()(X const &x) const {
+  return evaluate_horner(*this, x);
+}
 
 template <typename T, int N>
 [[nodiscard]] constexpr auto degree(polynomial_t<T, N> const &) noexcept -> int {
