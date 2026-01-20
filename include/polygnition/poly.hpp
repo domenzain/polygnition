@@ -1,4 +1,5 @@
 #pragma once
+#include "polygnition/util.hpp"
 #include <array>
 #include <cstddef>
 #include <iterator>
@@ -8,6 +9,13 @@
 #include <type_traits>
 
 namespace polygnition::polynomial {
+namespace detail {
+template <typename...> struct first_type;
+template <typename T, typename... Ts> struct first_type<T, Ts...> {
+  using type = T;
+};
+template <typename... Ts> using first_type_t = typename first_type<Ts...>::type;
+} // namespace detail
 // Dense, fixed-degree runtime polynomial: cₙxⁿ + … + c₀.
 template <typename T, int N>
   requires(N >= 0)
@@ -51,6 +59,29 @@ template <typename T, int N, typename X>
                          });
 }
 
+// Knuth's real-coefficient recurrence avoids generic complex multiplies.
+template <typename T, int N, typename U>
+  requires arithmetic<T> && std::floating_point<U>
+[[nodiscard]] constexpr auto evaluate_complex_knuth(
+    polynomial_t<T, N> const &p, std::complex<U> const &z) {
+  struct state_t {
+    U a{};
+    U b{};
+  };
+
+  auto const two_x = z.real() + z.real();
+  auto const minus_norm_sqr = -std::norm(z);
+  auto const state = std::accumulate(
+      p.begin(), p.end(), state_t{},
+      [two_x, minus_norm_sqr](state_t const &previous, T const coefficient) {
+        return state_t{.a = (two_x * previous.a) + previous.b,
+                       .b = (minus_norm_sqr * previous.a) +
+                            static_cast<U>(coefficient)};
+      });
+  return std::complex<U>{(z.real() * state.a) + state.b,
+                         z.imag() * state.a};
+}
+
 template <typename T, int N, typename X, typename... Remaining>
   requires(sizeof...(Remaining) > 0)
 [[nodiscard]] constexpr auto evaluate_multivariate(
@@ -72,10 +103,19 @@ template <typename... Vars>
   requires(sizeof...(Vars) > 0)
 [[nodiscard]] constexpr auto polynomial_t<T, N>::operator()(
     Vars const &...vars) const {
-  if constexpr (sizeof...(Vars) == 1) {
-    return evaluate_horner(*this, vars...);
-  } else {
+  if constexpr (sizeof...(Vars) > 1) {
     return evaluate_multivariate(*this, vars...);
+  } else {
+    using variable_t = std::remove_cvref_t<detail::first_type_t<Vars...>>;
+    if constexpr (arithmetic<T> && complex<variable_t>) {
+      if constexpr (std::floating_point<typename variable_t::value_type>) {
+        return evaluate_complex_knuth(*this, vars...);
+      } else {
+        return evaluate_horner(*this, vars...);
+      }
+    } else {
+      return evaluate_horner(*this, vars...);
+    }
   }
 }
 

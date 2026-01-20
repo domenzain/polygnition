@@ -1,4 +1,5 @@
 #include <boost/ut.hpp>
+#include <complex>
 #include <cstdint>
 #include <polygnition/poly.hpp>
 
@@ -19,6 +20,23 @@ int main() {
         1.0 * x * x * x * x * x + 2.0 * x * x * x * x +
         3.0 * x * x * x + 4.0 * x * x + 5.0 * x + 6.0;
     ut::expect(ut::approx(p(x), expected, 1e-12));
+  };
+
+  ut::test("Knuth evaluates real coefficients at complex points") = [] {
+    auto const p = poly::polynomial_t{1.0, 2.0, 3.0, 4.0};
+    auto const z = std::complex<double>{1.2, -0.7};
+    auto const expected = ((p[0] * z + p[1]) * z + p[2]) * z + p[3];
+    auto const got = p(z);
+    ut::expect(ut::approx(got.real(), expected.real(), 1e-12));
+    ut::expect(ut::approx(got.imag(), expected.imag(), 1e-12));
+  };
+
+  ut::test("complex coefficients retain generic Horner semantics") = [] {
+    using complex_t = std::complex<double>;
+    auto const p = poly::polynomial_t{complex_t{1.0, 1.0},
+                                      complex_t{2.0, -1.0}};
+    auto const z = complex_t{0.25, 0.5};
+    ut::expect(p(z) == p[0] * z + p[1]);
   };
 
   ut::test("callable coefficients compose into multivariate Horner") = [] {
