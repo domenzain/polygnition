@@ -33,8 +33,9 @@ struct polynomial_t : std::array<T, static_cast<std::size_t>(N + 1)> {
                : (*this)[static_cast<std::size_t>(N - degree_index)];
   }
 
-  template <typename X>
-  [[nodiscard]] constexpr auto operator()(X const &x) const;
+  template <typename... Vars>
+    requires(sizeof...(Vars) > 0)
+  [[nodiscard]] constexpr auto operator()(Vars const &...vars) const;
 };
 
 // Horner starts from the leading coefficient, so the return type need only model
@@ -50,11 +51,32 @@ template <typename T, int N, typename X>
                          });
 }
 
+template <typename T, int N, typename X, typename... Remaining>
+  requires(sizeof...(Remaining) > 0)
+[[nodiscard]] constexpr auto evaluate_multivariate(
+    polynomial_t<T, N> const &p, X const &x, Remaining const &...remaining) {
+  using coefficient_result_t = decltype(std::declval<T>()(remaining...));
+  using result_t = std::common_type_t<
+      decltype(std::declval<X>() * std::declval<coefficient_result_t>()),
+      coefficient_result_t>;
+  return std::accumulate(
+      p.begin(), p.end(), result_t{},
+      [&](auto const &accum, auto const &coefficient) {
+        return (accum * x) + coefficient(remaining...);
+      });
+}
+
 template <typename T, int N>
   requires(N >= 0)
-template <typename X>
-[[nodiscard]] constexpr auto polynomial_t<T, N>::operator()(X const &x) const {
-  return evaluate_horner(*this, x);
+template <typename... Vars>
+  requires(sizeof...(Vars) > 0)
+[[nodiscard]] constexpr auto polynomial_t<T, N>::operator()(
+    Vars const &...vars) const {
+  if constexpr (sizeof...(Vars) == 1) {
+    return evaluate_horner(*this, vars...);
+  } else {
+    return evaluate_multivariate(*this, vars...);
+  }
 }
 
 template <typename T, int N>

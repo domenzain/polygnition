@@ -21,6 +21,15 @@ int main() {
     ut::expect(ut::approx(p(x), expected, 1e-12));
   };
 
+  ut::test("callable coefficients compose into multivariate Horner") = [] {
+    auto const q = poly::polynomial_t{1.0, 2.0, 3.0};
+    auto const p = poly::polynomial_t{q, q, q};
+    auto const y = -1.1;
+    auto const x = 0.75;
+    auto const expected = q(x) * (y * y + y + 1.0);
+    ut::expect(ut::approx(p(y, x), expected, 1e-12));
+  };
+
   ut::test("Horner retains modular integer semantics") = [] {
     auto const p = poly::polynomial_t<std::uint32_t, 4>{
         0xFFFFFFF0u, 0xABCDEF01u, 0x12345678u, 0x9ABCDEF0u, 0x1u};
