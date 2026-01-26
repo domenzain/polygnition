@@ -6,6 +6,10 @@ namespace poly = polygnition::polynomial;
 namespace ut = boost::ut;
 
 static_assert(std::is_aggregate_v<poly::polynomial_t<double, 0>>);
+static_assert(std::is_empty_v<decltype(poly::literal<1.0, 2.0, 3.0>())>);
+static_assert(sizeof(decltype(poly::literal<1.0, 2.0, 3.0>())) == 1);
+static_assert(poly::literal<1.0, 2.0, 3.0>().coeff<2>() == 1.0);
+static_assert(poly::literal<1.0, 2.0, 3.0>().coeff(1) == 2.0);
 
 int main() {
   ut::test("construction and coefficient order") = [] {
@@ -19,6 +23,21 @@ int main() {
     ut::expect(p.coeff(1) == 2.0);
     ut::expect(p.coeff(-1) == 0.0);
     ut::expect(poly::degree(p) == 2);
+  };
+
+  ut::test("literal coefficients are structural and storage-free") = [] {
+    constexpr auto p = poly::literal<1.0, 2.0, 3.0>();
+    auto const [a, b, c] = p;
+    ut::expect(p(2.0) == 11.0);
+    ut::expect(a == 1.0);
+    ut::expect(b == 2.0);
+    ut::expect(c == 3.0);
+    ut::expect(poly::degree(p) == 2);
+  };
+
+  ut::test("mixed literal coefficients share a common value type") = [] {
+    constexpr auto p = poly::literal<1, 2.0>();
+    ut::expect(p(2.0) == 4.0);
   };
 
   ut::test("default construction is the zero polynomial") = [] {
