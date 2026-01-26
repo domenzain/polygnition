@@ -215,7 +215,7 @@ template <typename P, typename X>
   using coefficient_t = typename detail::stored_polynomial_type_t<P>::value_type;
   using result_t = decltype(std::declval<coefficient_t>() * std::declval<X>());
   return std::accumulate(std::next(p.begin()), p.end(),
-                         static_cast<result_t>(p[0]),
+                         detail::lift_coefficient<result_t>(p[0]),
                          [&](auto const &accum, auto const &coefficient) {
                            return (accum * x) + coefficient;
                          });
