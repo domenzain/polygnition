@@ -213,6 +213,86 @@ template <typename P, typename U>
                          z.imag() * state.a};
 }
 
+// Motzkin rewrites a quartic into two dependent quadratic stages. Runtime
+// coefficients can be preprocessed once; literal quartics can preprocess at
+// compile time.
+template <typename T>
+  requires std::floating_point<T>
+struct motzkin_preprocessed_t {
+  T leading;
+  T beta0;
+  T beta1;
+  T beta2;
+  T beta3;
+
+  template <typename X>
+  [[nodiscard]] constexpr auto operator()(X const &x) const;
+};
+
+namespace detail {
+template <typename T>
+[[nodiscard]] constexpr auto preprocess_motzkin_coefficients(
+    T leading, T c3, T c2, T c1, T c0) {
+  auto const inverse_leading = T{1} / leading;
+  auto const a3 = c3 * inverse_leading;
+  auto const a2 = c2 * inverse_leading;
+  auto const a1 = c1 * inverse_leading;
+  auto const a0 = c0 * inverse_leading;
+  auto const beta0 = T{0.5} * (a3 - T{1});
+  auto const z = a2 - (beta0 * (beta0 + T{1}));
+  auto const beta1 = a1 - (beta0 * z);
+  auto const beta2 = z - (T{2} * beta1);
+  auto const beta3 = a0 - (beta1 * (beta1 + beta2));
+  return motzkin_preprocessed_t<T>{leading, beta0, beta1, beta2, beta3};
+}
+} // namespace detail
+
+template <typename P>
+  requires detail::is_polynomial_v<P> &&
+           (detail::stored_polynomial_type_t<P>::degree == 4) &&
+           std::floating_point<
+               typename detail::stored_polynomial_type_t<P>::value_type>
+[[nodiscard]] constexpr auto preprocess_motzkin(P const &p) {
+  using value_type = typename detail::stored_polynomial_type_t<P>::value_type;
+  return detail::preprocess_motzkin_coefficients(
+      static_cast<value_type>(p[0]), static_cast<value_type>(p[1]),
+      static_cast<value_type>(p[2]), static_cast<value_type>(p[3]),
+      static_cast<value_type>(p[4]));
+}
+
+template <typename T, typename X>
+  requires std::floating_point<T> && arithmetic<std::remove_cvref_t<X>>
+[[nodiscard]] constexpr auto evaluate_motzkin(
+    motzkin_preprocessed_t<T> const &preprocessed, X const &x) {
+  using result_t = std::common_type_t<T, std::remove_cvref_t<X>>;
+  auto const xc = static_cast<result_t>(x);
+  auto const b0 = static_cast<result_t>(preprocessed.beta0);
+  auto const b1 = static_cast<result_t>(preprocessed.beta1);
+  auto const b2 = static_cast<result_t>(preprocessed.beta2);
+  auto const b3 = static_cast<result_t>(preprocessed.beta3);
+  auto const leading = static_cast<result_t>(preprocessed.leading);
+  auto const y = ((xc + b0) * xc) + b1;
+  return ((((y + xc) + b2) * y) + b3) * leading;
+}
+
+template <typename P, typename X>
+  requires detail::is_polynomial_v<P> &&
+           (detail::stored_polynomial_type_t<P>::degree == 4) &&
+           std::floating_point<
+               typename detail::stored_polynomial_type_t<P>::value_type> &&
+           arithmetic<std::remove_cvref_t<X>>
+[[nodiscard]] constexpr auto evaluate_motzkin(P const &p, X const &x) {
+  return evaluate_motzkin(preprocess_motzkin(p), x);
+}
+
+template <typename T>
+  requires std::floating_point<T>
+template <typename X>
+[[nodiscard]] constexpr auto motzkin_preprocessed_t<T>::operator()(
+    X const &x) const {
+  return evaluate_motzkin(*this, x);
+}
+
 namespace detail {
 template <typename P, typename... Vars>
   requires is_polynomial_v<P> && (sizeof...(Vars) > 0)
@@ -229,6 +309,11 @@ template <typename P, typename... Vars>
       } else {
         return evaluate_horner(p, vars...);
       }
+    } else if constexpr (is_static_polynomial_v<P> &&
+                         stored_polynomial_type_t<P>::degree == 4 &&
+                         std::floating_point<coefficient_t> &&
+                         arithmetic<variable_t>) {
+      return evaluate_motzkin(p, vars...);
     } else {
       return evaluate_horner(p, vars...);
     }

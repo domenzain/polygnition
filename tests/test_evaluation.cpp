@@ -22,6 +22,20 @@ int main() {
     ut::expect(ut::approx(p(x), expected, 1e-12));
   };
 
+  ut::test("runtime quartics can preprocess Motzkin once") = [] {
+    auto const p = poly::polynomial_t{1.0, -2.0, 3.0, -4.0, 5.0};
+    auto const prepared = poly::preprocess_motzkin(p);
+    auto const x = 0.375;
+    ut::expect(ut::approx(prepared(x), poly::evaluate_horner(p, x), 1e-12));
+  };
+
+  ut::test("literal quartics select compile-time Motzkin preprocessing") = [] {
+    constexpr auto p = poly::literal<1.0, -2.0, 3.0, -4.0, 5.0>();
+    constexpr auto x = 0.375;
+    static_assert(p(x) == poly::evaluate_motzkin(p, x));
+    ut::expect(ut::approx(p(x), poly::evaluate_horner(p, x), 1e-12));
+  };
+
   ut::test("Knuth evaluates real coefficients at complex points") = [] {
     auto const p = poly::polynomial_t{1.0, 2.0, 3.0, 4.0};
     auto const z = std::complex<double>{1.2, -0.7};
