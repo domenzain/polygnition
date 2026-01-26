@@ -29,3 +29,4 @@ endfunction()
 
 polygnition_add_test(test_polynomial_api)
 polygnition_add_test(test_evaluation)
+polygnition_add_test(test_polynomial_arithmetic)

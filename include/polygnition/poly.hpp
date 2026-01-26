@@ -155,6 +155,57 @@ template <typename R, typename P>
              : static_cast<R>(p[static_cast<std::size_t>(source_degree -
                                                          degree_index)]);
 }
+
+template <typename Return, typename Coefficient>
+[[nodiscard]] constexpr auto lift_coefficient(Coefficient const &coefficient)
+    -> Return {
+  if constexpr (std::convertible_to<Coefficient, Return>) {
+    return static_cast<Return>(coefficient);
+  } else {
+    return Return{} + coefficient;
+  }
+}
+
+template <std::size_t... I, typename A, typename B>
+[[nodiscard]] constexpr auto equal_coefficients(
+    A const &a, B const &b, std::index_sequence<I...>) -> bool {
+  return ((coefficient_at<I>(a) == coefficient_at<I>(b)) && ...);
+}
+
+template <int Degree, typename P>
+[[nodiscard]] constexpr auto coefficient_by_degree_or_zero(P const &p) noexcept
+    -> typename stored_polynomial_type_t<P>::value_type {
+  using value_type = typename stored_polynomial_type_t<P>::value_type;
+  if constexpr (Degree > stored_polynomial_type_t<P>::degree) {
+    return value_type{};
+  } else {
+    return coefficient_by_degree<Degree>(p);
+  }
+}
+
+template <int... Degree, typename A, typename B>
+[[nodiscard]] constexpr auto equal_coefficients_by_degree(
+    A const &a, B const &b, std::integer_sequence<int, Degree...>) -> bool {
+  return ((coefficient_by_degree_or_zero<Degree>(a) ==
+           coefficient_by_degree_or_zero<Degree>(b)) && ...);
+}
+
+struct is_zero_t {
+  template <typename T>
+  [[nodiscard]] constexpr auto operator()(T const &value) const
+      noexcept(noexcept(value == T{})) -> bool {
+    return value == T{};
+  }
+};
+inline constexpr is_zero_t is_zero{};
+
+template <typename Coefficients>
+[[nodiscard]] constexpr auto effective_degree_from_coefficients(
+    Coefficients const &coefficients, int static_degree) noexcept -> int {
+  auto const first_nonzero = std::ranges::find_if_not(coefficients, is_zero);
+  return static_degree -
+         static_cast<int>(first_nonzero - std::ranges::begin(coefficients));
+}
 } // namespace detail
 
 // Horner starts from the leading coefficient, avoiding a synthetic zero.
@@ -303,8 +354,9 @@ template <typename P, typename... Vars>
   } else {
     using coefficient_t = typename stored_polynomial_type_t<P>::value_type;
     using variable_t = std::remove_cvref_t<first_type_t<Vars...>>;
-    if constexpr (arithmetic<coefficient_t> && complex<variable_t>) {
-      if constexpr (std::floating_point<typename variable_t::value_type>) {
+    if constexpr (complex<variable_t>) {
+      if constexpr (arithmetic<coefficient_t> &&
+                    std::floating_point<typename variable_t::value_type>) {
         return evaluate_complex_knuth(p, vars...);
       } else {
         return evaluate_horner(p, vars...);
@@ -369,15 +421,41 @@ template <std::size_t I, polynomial_t P>
   return static_poly<P>::value[I];
 }
 
+// Equality is structural; same_polynomial ignores leading-zero storage.
 template <typename A, typename B>
   requires detail::is_polynomial_v<A> && detail::is_polynomial_v<B>
 [[nodiscard]] constexpr auto operator==(A const &a, B const &b) -> bool {
-  if constexpr (detail::stored_polynomial_type_t<A>::degree !=
-                detail::stored_polynomial_type_t<B>::degree) {
+  constexpr auto a_degree = detail::stored_polynomial_type_t<A>::degree;
+  constexpr auto b_degree = detail::stored_polynomial_type_t<B>::degree;
+  if constexpr (a_degree != b_degree) {
     return false;
   } else {
-    return std::equal(a.begin(), a.end(), b.begin());
+    return detail::equal_coefficients(
+        a, b,
+        std::make_index_sequence<static_cast<std::size_t>(a_degree + 1)>{});
   }
+}
+
+template <typename A, typename B>
+  requires detail::is_polynomial_v<A> && detail::is_polynomial_v<B>
+[[nodiscard]] constexpr auto operator!=(A const &a, B const &b) -> bool {
+  return !(a == b);
+}
+
+template <typename A, typename B>
+  requires detail::is_polynomial_v<A> && detail::is_polynomial_v<B>
+[[nodiscard]] constexpr auto same_polynomial(A const &a, B const &b) -> bool {
+  constexpr auto a_degree = detail::stored_polynomial_type_t<A>::degree;
+  constexpr auto b_degree = detail::stored_polynomial_type_t<B>::degree;
+  constexpr auto max_degree = a_degree > b_degree ? a_degree : b_degree;
+  return detail::equal_coefficients_by_degree(
+      a, b, std::make_integer_sequence<int, max_degree + 1>{});
+}
+
+template <typename P>
+  requires detail::is_polynomial_v<P>
+[[nodiscard]] constexpr auto effective_degree(P const &p) noexcept -> int {
+  return detail::effective_degree_from_coefficients(p, degree(p));
 }
 
 template <class T, class... U>
