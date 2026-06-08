@@ -2,8 +2,30 @@
 #include <complex>
 #include <concepts>
 #include <type_traits>
+#include <utility>
 
 namespace polygnition {
+namespace detail {
+struct tag_invoke_t {
+  template <typename Tag, typename... Args>
+    requires requires(Tag &&tag, Args &&...args) {
+      tag_invoke(std::forward<Tag>(tag), std::forward<Args>(args)...);
+    }
+  constexpr auto operator()(Tag &&tag, Args &&...args) const
+      noexcept(noexcept(tag_invoke(std::forward<Tag>(tag),
+                                   std::forward<Args>(args)...))) {
+    return tag_invoke(std::forward<Tag>(tag), std::forward<Args>(args)...);
+  }
+};
+
+// Keep accidental fallback overloads out of unqualified lookup.
+void tag_invoke() = delete;
+} // namespace detail
+
+inline namespace customization {
+inline constexpr detail::tag_invoke_t tag_invoke{};
+}
+
 template <typename T>
 concept arithmetic = std::is_arithmetic_v<T>;
 

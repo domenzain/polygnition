@@ -180,7 +180,7 @@ template <int Order, typename T, int N, typename X>
   if constexpr (Order > 0) {
     seed[Order - 1] = value_t{1};
   }
-  return detail::taylor_from<value_t, Order>(evaluate_horner(p, seed));
+  return detail::taylor_from<value_t, Order>(evaluate(horner, p, seed));
 }
 
 template <int Order, polynomial_t P, typename X>

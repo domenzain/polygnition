@@ -7,6 +7,17 @@ namespace poly = polygnition::polynomial;
 namespace ut = boost::ut;
 
 int main() {
+  ut::test("explicit strategies share the evaluation surface") = [] {
+    auto const p = poly::polynomial_t{1.0, 2.0, 3.0, 4.0, 5.0, 6.0,
+                                      7.0, 8.0};
+    auto const x = 0.75;
+    auto const expected = poly::evaluate(poly::horner, p, x);
+    ut::expect(ut::approx(poly::evaluate(poly::dorn<3>, p, x), expected,
+                          1e-12));
+    ut::expect(ut::approx(poly::evaluate(poly::estrin, p, x), expected,
+                          1e-12));
+  };
+
   ut::test("Horner evaluates integral coefficients") = [] {
     auto const p = poly::polynomial_t{1, 2, 3, 4};
     auto const x = 5;

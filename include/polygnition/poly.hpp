@@ -16,6 +16,25 @@ namespace polygnition::polynomial {
 template <auto V> using cval = detail::cval_t<V>;
 template <auto V> inline constexpr cval<V> constant{};
 
+namespace algorithm {
+struct horner_t {};
+struct knuth_t {};
+struct motzkin_t {};
+struct multivariate_horner_t {};
+struct estrin_t {};
+template <int K> struct dorn_t {
+  static_assert(K > 1, "Dorn decomposition needs at least two residue classes");
+  static constexpr int stride = K;
+};
+} // namespace algorithm
+
+inline constexpr algorithm::horner_t horner{};
+inline constexpr algorithm::knuth_t knuth{};
+inline constexpr algorithm::motzkin_t motzkin{};
+inline constexpr algorithm::multivariate_horner_t multivariate_horner{};
+inline constexpr algorithm::estrin_t estrin{};
+template <int K> inline constexpr algorithm::dorn_t<K> dorn{};
+
 // Dense, fixed-degree runtime polynomial: cₙxⁿ + … + c₀.
 template <typename T, int N>
   requires(N >= 0)
@@ -208,6 +227,26 @@ template <typename Coefficients>
 }
 } // namespace detail
 
+struct evaluate_t {
+  template <typename P, typename... Vars>
+    requires detail::is_polynomial_v<P> && (sizeof...(Vars) > 0)
+  [[nodiscard]] constexpr auto operator()(P const &p, Vars &&...vars) const;
+
+  template <typename Algorithm, typename P, typename... Vars>
+    requires requires(evaluate_t const &self, Algorithm algorithm, P const &p,
+                      Vars &&...vars) {
+      polygnition::tag_invoke(self, algorithm, p,
+                              std::forward<Vars>(vars)...);
+    }
+  [[nodiscard]] constexpr auto operator()(Algorithm algorithm, P const &p,
+                                          Vars &&...vars) const {
+    return polygnition::tag_invoke(*this, algorithm, p,
+                                   std::forward<Vars>(vars)...);
+  }
+};
+
+inline constexpr evaluate_t evaluate{};
+
 // Horner starts from the leading coefficient, avoiding a synthetic zero.
 template <typename P, typename X>
   requires detail::is_polynomial_v<P>
@@ -219,6 +258,13 @@ template <typename P, typename X>
                          [&](auto const &accum, auto const &coefficient) {
                            return (accum * x) + coefficient;
                          });
+}
+
+template <typename P, typename X>
+  requires detail::is_polynomial_v<P>
+[[nodiscard]] constexpr auto tag_invoke(evaluate_t, algorithm::horner_t,
+                                        P const &p, X &&x) {
+  return evaluate_horner(p, std::forward<X>(x));
 }
 
 template <typename P, typename X, typename... Remaining>
@@ -235,6 +281,14 @@ template <typename P, typename X, typename... Remaining>
       [&](auto const &accum, auto const &coefficient) {
         return (accum * x) + coefficient(remaining...);
       });
+}
+
+template <typename P, typename... Vars>
+  requires detail::is_polynomial_v<P> && (sizeof...(Vars) > 1)
+[[nodiscard]] constexpr auto tag_invoke(evaluate_t,
+                                        algorithm::multivariate_horner_t,
+                                        P const &p, Vars &&...vars) {
+  return evaluate_multivariate(p, std::forward<Vars>(vars)...);
 }
 
 // Knuth's real-coefficient recurrence avoids generic complex multiplies.
@@ -262,6 +316,13 @@ template <typename P, typename U>
       });
   return std::complex<U>{(z.real() * state.a) + state.b,
                          z.imag() * state.a};
+}
+
+template <typename P, typename Z>
+  requires detail::is_polynomial_v<P>
+[[nodiscard]] constexpr auto tag_invoke(evaluate_t, algorithm::knuth_t,
+                                        P const &p, Z &&z) {
+  return evaluate_complex_knuth(p, std::forward<Z>(z));
 }
 
 // Motzkin rewrites a quartic into two dependent quadratic stages. Runtime
@@ -341,7 +402,135 @@ template <typename T>
 template <typename X>
 [[nodiscard]] constexpr auto motzkin_preprocessed_t<T>::operator()(
     X const &x) const {
-  return evaluate_motzkin(*this, x);
+  return evaluate(motzkin, *this, x);
+}
+
+template <typename T, typename X>
+[[nodiscard]] constexpr auto tag_invoke(evaluate_t, algorithm::motzkin_t,
+                                        motzkin_preprocessed_t<T> const &p,
+                                        X &&x) {
+  return evaluate_motzkin(p, std::forward<X>(x));
+}
+
+template <typename P, typename X>
+  requires detail::is_polynomial_v<P>
+[[nodiscard]] constexpr auto tag_invoke(evaluate_t, algorithm::motzkin_t,
+                                        P const &p, X &&x) {
+  return evaluate_motzkin(p, std::forward<X>(x));
+}
+
+namespace detail {
+template <int Exponent, typename Return, typename X>
+[[nodiscard]] constexpr auto power(X const &x) -> Return {
+  if constexpr (Exponent == 0) {
+    return lift_coefficient<Return>(1);
+  } else if constexpr (Exponent == 1) {
+    return lift_coefficient<Return>(x);
+  } else if constexpr (Exponent % 2 == 0) {
+    auto const half = power<Exponent / 2, Return>(x);
+    return half * half;
+  } else {
+    return power<Exponent - 1, Return>(x) * lift_coefficient<Return>(x);
+  }
+}
+
+template <int J, int I, int K, typename P, typename Y, typename Return>
+[[nodiscard]] constexpr auto dorn_fold(P const &p, Y const &y,
+                                       Return const &accum) -> Return {
+  if constexpr (J < I) {
+    return accum;
+  } else {
+    return dorn_fold<J - K, I, K>(
+        p, y, (accum * y) +
+                  lift_coefficient<Return>(coefficient_by_degree<J>(p)));
+  }
+}
+
+template <int I, int K, typename P, typename X, typename Y, typename Return>
+[[nodiscard]] constexpr auto dorn_partial(P const &p, X const &x,
+                                          Y const &y) -> Return {
+  constexpr int degree = stored_polynomial_type_t<P>::degree;
+  if constexpr (I > degree) {
+    return Return{};
+  } else {
+    constexpr int highest = degree - ((degree - I) % K);
+    return power<I, Return>(x) *
+           dorn_fold<highest - K, I, K>(
+               p, y,
+               lift_coefficient<Return>(coefficient_by_degree<highest>(p)));
+  }
+}
+
+template <int I, int K, typename P, typename X, typename Y, typename Return>
+[[nodiscard]] constexpr auto dorn_sum(P const &p, X const &x, Y const &y)
+    -> Return {
+  if constexpr (I == K) {
+    return Return{};
+  } else {
+    return dorn_partial<I, K, P, X, Y, Return>(p, x, y) +
+           dorn_sum<I + 1, K, P, X, Y, Return>(p, x, y);
+  }
+}
+
+template <std::size_t I, typename Return, typename P, typename X>
+[[nodiscard]] constexpr auto estrin_pair(P const &p, X const &x) {
+  return (lift_coefficient<Return>(coefficient_at<I>(p)) * x) +
+         lift_coefficient<Return>(coefficient_at<I + 1>(p));
+}
+
+template <typename P, typename X>
+[[nodiscard]] constexpr auto estrin_eval(P const &p, X x) {
+  constexpr int degree = stored_polynomial_type_t<P>::degree;
+  using coefficient_t = typename stored_polynomial_type_t<P>::value_type;
+  using return_t = decltype(std::declval<coefficient_t>() * std::declval<X>());
+  if constexpr (degree == 0) {
+    return lift_coefficient<return_t>(coefficient_at<0>(p));
+  } else if constexpr (degree % 2 == 0) {
+    constexpr int half_degree = degree / 2;
+    return [&]<std::size_t... I>(std::index_sequence<I...>) {
+      auto const reduced = polynomial_t<return_t, half_degree>{
+          lift_coefficient<return_t>(coefficient_at<0>(p)),
+          estrin_pair<2 * (I + 1) - 1, return_t>(p, x)...};
+      return estrin_eval(reduced, x * x);
+    }(std::make_index_sequence<static_cast<std::size_t>(half_degree)>{});
+  } else {
+    constexpr int half_degree = degree / 2;
+    return [&]<std::size_t... I>(std::index_sequence<I...>) {
+      auto const reduced = polynomial_t<return_t, half_degree>{
+          estrin_pair<2 * I, return_t>(p, x)...};
+      return estrin_eval(reduced, x * x);
+    }(std::make_index_sequence<static_cast<std::size_t>(half_degree + 1)>{});
+  }
+}
+} // namespace detail
+
+template <int K, typename P, typename X>
+  requires(K > 1) && detail::is_polynomial_v<P>
+[[nodiscard]] constexpr auto evaluate_dorn(P const &p, X const &x) {
+  using coefficient_t = typename detail::stored_polynomial_type_t<P>::value_type;
+  using return_t = decltype(std::declval<coefficient_t>() * std::declval<X>());
+  auto const y = detail::power<K, return_t>(x);
+  return detail::dorn_sum<0, K, P, X, return_t, return_t>(p, x, y);
+}
+
+template <int K, typename P, typename X>
+  requires detail::is_polynomial_v<P>
+[[nodiscard]] constexpr auto tag_invoke(evaluate_t, algorithm::dorn_t<K>,
+                                        P const &p, X &&x) {
+  return evaluate_dorn<K>(p, std::forward<X>(x));
+}
+
+template <typename P, typename X>
+  requires detail::is_polynomial_v<P>
+[[nodiscard]] constexpr auto evaluate_estrin(P const &p, X &&x) {
+  return detail::estrin_eval(p, std::forward<X>(x));
+}
+
+template <typename P, typename X>
+  requires detail::is_polynomial_v<P>
+[[nodiscard]] constexpr auto tag_invoke(evaluate_t, algorithm::estrin_t,
+                                        P const &p, X &&x) {
+  return evaluate_estrin(p, std::forward<X>(x));
 }
 
 namespace detail {
@@ -373,13 +562,20 @@ template <typename P, typename... Vars>
 }
 } // namespace detail
 
+template <typename P, typename... Vars>
+  requires detail::is_polynomial_v<P> && (sizeof...(Vars) > 0)
+[[nodiscard]] constexpr auto evaluate_t::operator()(P const &p,
+                                                    Vars &&...vars) const {
+  return detail::evaluate_automatic(p, std::forward<Vars>(vars)...);
+}
+
 template <typename T, int N>
   requires(N >= 0)
 template <typename... Vars>
   requires(sizeof...(Vars) > 0)
 [[nodiscard]] constexpr auto polynomial_t<T, N>::operator()(
     Vars const &...vars) const {
-  return detail::evaluate_automatic(*this, vars...);
+  return evaluate(*this, vars...);
 }
 
 template <polynomial_t P>
@@ -387,7 +583,7 @@ template <typename... Vars>
   requires(sizeof...(Vars) > 0)
 [[nodiscard]] constexpr auto static_poly<P>::operator()(
     Vars const &...vars) const {
-  return detail::evaluate_automatic(*this, vars...);
+  return evaluate(*this, vars...);
 }
 
 template <std::size_t I, typename T, int N>

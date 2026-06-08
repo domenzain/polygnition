@@ -11,7 +11,18 @@ static_assert(sizeof(decltype(poly::literal<1.0, 2.0, 3.0>())) == 1);
 static_assert(poly::literal<1.0, 2.0, 3.0>().coeff<2>() == 1.0);
 static_assert(poly::literal<1.0, 2.0, 3.0>().coeff(1) == 2.0);
 
+struct sentinel_algorithm {};
+constexpr auto tag_invoke(poly::evaluate_t, sentinel_algorithm,
+                          poly::polynomial_t<int, 1> const &, int) {
+  return 42;
+}
+
 int main() {
+  ut::test("the CPO admits an external strategy") = [] {
+    auto const p = poly::polynomial_t{1, 2};
+    ut::expect(poly::evaluate(sentinel_algorithm{}, p, 9) == 42);
+  };
+
   ut::test("construction and coefficient order") = [] {
     auto const p = poly::polynomial_t{1.0, 2.0, 3.0};
     auto const [a, b, c] = p;
