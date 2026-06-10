@@ -1,11 +1,19 @@
 #pragma once
 #include <complex>
+#include <cstddef>
 #include <concepts>
 #include <type_traits>
 #include <utility>
 
 namespace polygnition {
 namespace detail {
+template <std::size_t N, typename Fn>
+constexpr void static_for(Fn &&fn) {
+  [&]<std::size_t... I>(std::index_sequence<I...>) {
+    (std::forward<Fn>(fn).template operator()<I>(), ...);
+  }(std::make_index_sequence<N>{});
+}
+
 struct tag_invoke_t {
   template <typename Tag, typename... Args>
     requires requires(Tag &&tag, Args &&...args) {
