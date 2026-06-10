@@ -7,6 +7,7 @@
 #include <concepts>
 #include <cstddef>
 #include <iterator>
+#include <limits>
 #include <numeric>
 #include <tuple>
 #include <type_traits>
@@ -22,6 +23,7 @@ struct knuth_t {};
 struct motzkin_t {};
 struct multivariate_horner_t {};
 struct estrin_t {};
+struct compensated_t {};
 template <int K> struct dorn_t {
   static_assert(K > 1, "Dorn decomposition needs at least two residue classes");
   static constexpr int stride = K;
@@ -33,6 +35,7 @@ inline constexpr algorithm::knuth_t knuth{};
 inline constexpr algorithm::motzkin_t motzkin{};
 inline constexpr algorithm::multivariate_horner_t multivariate_horner{};
 inline constexpr algorithm::estrin_t estrin{};
+inline constexpr algorithm::compensated_t compensated{};
 template <int K> inline constexpr algorithm::dorn_t<K> dorn{};
 
 // Dense, fixed-degree runtime polynomial: cₙxⁿ + … + c₀.
@@ -531,6 +534,132 @@ template <typename P, typename X>
 [[nodiscard]] constexpr auto tag_invoke(evaluate_t, algorithm::estrin_t,
                                         P const &p, X &&x) {
   return evaluate_estrin(p, std::forward<X>(x));
+}
+
+namespace detail {
+template <typename T> [[nodiscard]] constexpr auto abs_value(T value) {
+  return value < T{} ? -value : value;
+}
+
+template <int Exponent, typename T>
+[[nodiscard]] constexpr auto pow_unsigned(T value) -> T {
+  if constexpr (Exponent == 0) {
+    return T{1};
+  } else {
+    return value * pow_unsigned<Exponent - 1>(value);
+  }
+}
+
+template <std::size_t I, typename Bound, typename P>
+[[nodiscard]] constexpr auto abs_weighted_coefficient(P const &p,
+                                                      Bound xmax) -> Bound {
+  constexpr int degree = stored_polynomial_type_t<P>::degree;
+  constexpr int exponent = degree - static_cast<int>(I);
+  return abs_value(static_cast<Bound>(coefficient_at<I>(p))) *
+         pow_unsigned<exponent>(abs_value(xmax));
+}
+
+template <typename Bound, typename P, std::size_t... I>
+[[nodiscard]] constexpr auto weighted_coefficient_sum(
+    P const &p, Bound xmax, std::index_sequence<I...>) -> Bound {
+  return (Bound{} + ... + abs_weighted_coefficient<I, Bound>(p, xmax));
+}
+
+template <typename T> struct eft_pair {
+  T value;
+  T error;
+};
+
+template <typename T> [[nodiscard]] constexpr auto splitter() -> T {
+  if constexpr (std::numeric_limits<T>::digits <= 24) {
+    return T{4097};
+  } else {
+    return T{134217729};
+  }
+}
+
+template <typename T> [[nodiscard]] constexpr auto split(T a) -> eft_pair<T> {
+  auto const c = splitter<T>() * a;
+  auto const abig = c - a;
+  auto const high = c - abig;
+  return {.value = high, .error = a - high};
+}
+
+template <typename T>
+[[nodiscard]] constexpr auto two_sum(T a, T b) -> eft_pair<T> {
+  auto const sum = a + b;
+  auto const bb = sum - a;
+  return {.value = sum, .error = (a - (sum - bb)) + (b - bb)};
+}
+
+template <typename T>
+[[nodiscard]] constexpr auto two_prod(T a, T b) -> eft_pair<T> {
+  auto const product = a * b;
+  auto const as = split(a);
+  auto const bs = split(b);
+  auto const error = ((as.value * bs.value - product) +
+                      as.value * bs.error + as.error * bs.value) +
+                     as.error * bs.error;
+  return {.value = product, .error = error};
+}
+
+template <typename P, typename X, typename Return, std::size_t... I>
+[[nodiscard]] constexpr auto compensated_horner_indexed(
+    P const &p, X const &x, std::index_sequence<I...>) -> Return {
+  auto result = lift_coefficient<Return>(coefficient_at<0>(p));
+  auto correction = Return{};
+  auto const xc = static_cast<Return>(x);
+  ([&] {
+    auto const product = two_prod(result, xc);
+    auto const sum =
+        two_sum(product.value, static_cast<Return>(coefficient_at<I + 1>(p)));
+    correction = (correction * xc) + (product.error + sum.error);
+    result = sum.value;
+  }(),
+   ...);
+  return result + correction;
+}
+} // namespace detail
+
+template <typename P, typename X>
+  requires detail::is_polynomial_v<P> &&
+           arithmetic<typename detail::stored_polynomial_type_t<P>::value_type> &&
+           arithmetic<std::remove_cvref_t<X>>
+[[nodiscard]] constexpr auto error_bound(P const &p, X const &xmax) {
+  using coefficient_t = typename detail::stored_polynomial_type_t<P>::value_type;
+  constexpr auto degree = detail::stored_polynomial_type_t<P>::degree;
+  using bound_t = std::common_type_t<double, coefficient_t,
+                                     std::remove_cvref_t<X>>;
+  constexpr auto operations = 2 * degree;
+  constexpr auto epsilon = std::numeric_limits<bound_t>::epsilon() / bound_t{2};
+  constexpr auto gamma =
+      (operations * epsilon) / (bound_t{1} - (operations * epsilon));
+  return gamma * detail::weighted_coefficient_sum<bound_t>(
+                     p, static_cast<bound_t>(xmax),
+                     std::make_index_sequence<
+                         static_cast<std::size_t>(degree + 1)>{});
+}
+
+template <typename P, typename X>
+  requires detail::is_polynomial_v<P> &&
+           std::floating_point<std::remove_cvref_t<decltype(
+               std::declval<typename detail::stored_polynomial_type_t<P>::value_type>() *
+               std::declval<X>())>>
+[[nodiscard]] constexpr auto evaluate_compensated(P const &p, X const &x) {
+  using coefficient_t = typename detail::stored_polynomial_type_t<P>::value_type;
+  using return_t = std::remove_cvref_t<
+      decltype(std::declval<coefficient_t>() * std::declval<X>())>;
+  constexpr auto degree = detail::stored_polynomial_type_t<P>::degree;
+  return detail::compensated_horner_indexed<P, X, return_t>(
+      p, x, std::make_index_sequence<static_cast<std::size_t>(degree)>{});
+}
+
+template <typename P, typename X>
+  requires detail::is_polynomial_v<P> &&
+           requires(P const &p, X const &x) { evaluate_compensated(p, x); }
+[[nodiscard]] constexpr auto tag_invoke(evaluate_t, algorithm::compensated_t,
+                                        P const &p, X &&x) {
+  return evaluate_compensated(p, std::forward<X>(x));
 }
 
 namespace detail {
