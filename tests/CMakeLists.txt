@@ -23,7 +23,11 @@ FetchContent_MakeAvailable(ut)
 
 function(polygnition_add_test name)
   add_executable(${name} ${name}.cpp)
-  target_link_libraries(${name} PRIVATE polygnition::polygnition Boost::ut)
+  target_link_libraries(${name} PRIVATE
+    polygnition::polygnition
+    polygnition::dev
+    Boost::ut
+  )
   add_test(NAME ${name} COMMAND ${name})
 endfunction()
 
@@ -33,3 +37,5 @@ polygnition_add_test(test_polynomial_arithmetic)
 polygnition_add_test(test_taylor_series)
 polygnition_add_test(test_knuth_eve)
 polygnition_add_test(test_accuracy_contracts)
+
+polygnition_add_test(test_algorithm_selection)
