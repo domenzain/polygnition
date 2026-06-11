@@ -23,6 +23,11 @@ FetchContent_MakeAvailable(ut)
 
 function(polygnition_add_test name)
   add_executable(${name} ${name}.cpp)
+  if (APPLE AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    # Boost.UT guards constructor-priority setup only through this platform macro;
+    # GCC on Darwin rejects constructor priorities as well.
+    target_compile_definitions(${name} PRIVATE __EMSCRIPTEN__)
+  endif()
   target_link_libraries(${name} PRIVATE
     polygnition::polygnition
     polygnition::dev
@@ -32,10 +37,21 @@ function(polygnition_add_test name)
 endfunction()
 
 polygnition_add_test(test_polynomial_api)
-polygnition_add_test(test_evaluation)
 polygnition_add_test(test_polynomial_arithmetic)
-polygnition_add_test(test_taylor_series)
+polygnition_add_test(test_evaluation)
 polygnition_add_test(test_knuth_eve)
 polygnition_add_test(test_accuracy_contracts)
-
 polygnition_add_test(test_algorithm_selection)
+polygnition_add_test(test_taylor_series)
+
+find_package(Python3 COMPONENTS Interpreter)
+if (Python3_Interpreter_FOUND)
+  add_test(
+    NAME test_profile_tuning_generated
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/check_profile_tuning_generated.py
+            --python ${Python3_EXECUTABLE}
+            --script ${PROJECT_SOURCE_DIR}/benchmark/generate_profile_tuning.py
+            --inc ${PROJECT_SOURCE_DIR}/include/polygnition/detail/profile_tuning.inc
+  )
+endif()
