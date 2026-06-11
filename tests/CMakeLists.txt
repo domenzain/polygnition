@@ -55,3 +55,18 @@ if (Python3_Interpreter_FOUND)
             --inc ${PROJECT_SOURCE_DIR}/include/polygnition/detail/profile_tuning.inc
   )
 endif()
+
+if (Python3_Interpreter_FOUND AND
+    CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang" AND
+    CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64|amd64")
+  add_test(
+    NAME test_codegen_contracts
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/check_codegen_contracts.py
+            --cxx ${CMAKE_CXX_COMPILER}
+            --source ${CMAKE_CURRENT_SOURCE_DIR}/codegen_contract.cpp
+            --bridge-target ${CMAKE_CURRENT_SOURCE_DIR}/codegen_bridge_target.cpp
+            --include ${PROJECT_SOURCE_DIR}/include
+            --build-dir ${CMAKE_CURRENT_BINARY_DIR}/codegen
+  )
+endif()
