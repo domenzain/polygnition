@@ -420,13 +420,14 @@ template <typename P, typename Var, typename Return, std::size_t... I>
   if constexpr (requires(Return const &a, Var const &raw) {
                   { a * raw } -> std::convertible_to<Return>;
                 }) {
-    ((accum = static_cast<Return>(accum * x) +
-               lift_coefficient<Return>(coefficient_at<I + 1>(p))),
+    ((accum = polygnition::fma(
+          accum, x, lift_coefficient<Return>(coefficient_at<I + 1>(p)))),
      ...);
   } else {
     auto const lifted_x = lift_coefficient<Return>(x);
-    ((accum = (accum * lifted_x) +
-               lift_coefficient<Return>(coefficient_at<I + 1>(p))),
+    ((accum = polygnition::fma(
+          accum, lifted_x,
+          lift_coefficient<Return>(coefficient_at<I + 1>(p)))),
      ...);
   }
   return accum;
@@ -455,7 +456,9 @@ dorn_fold(P const &p, Y const &y, Return const &accum) -> Return {
   } else {
     return dorn_fold<J - K, I, K>(
         p, y,
-        (accum * y) + lift_coefficient<Return>(coefficient_by_degree<J>(p)));
+        polygnition::fma(
+            accum, y,
+            lift_coefficient<Return>(coefficient_by_degree<J>(p))));
   }
 }
 
@@ -492,8 +495,10 @@ knuth_indexed(P const &p, U const &two_x, U const &minus_norm_sqr,
   ([&] {
     auto const a = state.a;
     auto const b = state.b;
-    state = State{.a = (two_x * a) + b,
-                  .b = (minus_norm_sqr * a) + static_cast<U>(coefficient_at<I>(p))};
+    state = State{
+        .a = polygnition::fma(two_x, a, b),
+        .b = polygnition::fma(minus_norm_sqr, a,
+                              static_cast<U>(coefficient_at<I>(p)))};
   }(),
    ...);
   return state;
@@ -507,16 +512,18 @@ knuth_split_components_indexed(P const &p, Component const &x,
   auto a = Component{};
   auto b = Component{};
   auto const two_x = x + x;
-  auto const minus_norm_sqr = Component{} - ((x * x) + (y * y));
+  auto const minus_norm_sqr =
+      Component{} - polygnition::fma(x, x, y * y);
   ([&] {
     auto const old_a = a;
     auto const old_b = b;
-    a = (two_x * old_a) + old_b;
-    b = (minus_norm_sqr * old_a) +
-        lift_coefficient<Component>(coefficient_at<I>(p));
+    a = polygnition::fma(two_x, old_a, old_b);
+    b = polygnition::fma(
+        minus_norm_sqr, old_a,
+        lift_coefficient<Component>(coefficient_at<I>(p)));
   }(),
    ...);
-  return {(x * a) + b, y * a};
+  return {polygnition::fma(x, a, b), y * a};
 }
 
 template <typename P, typename Component>
@@ -721,8 +728,8 @@ evaluate_motzkin(motzkin_preprocessed_t<T> const &pre, Var const &x) {
   auto const b3 = detail::lift_coefficient<compute_t>(pre.beta3);
   auto const lead = detail::lift_coefficient<compute_t>(pre.leading);
 
-  auto const y = (xc + b0) * xc + b1;
-  return ((y + xc + b2) * y + b3) * lead;
+  auto const y = polygnition::fma(xc + b0, xc, b1);
+  return polygnition::fma(y + xc + b2, y, b3) * lead;
 }
 
 template <typename P, typename Var>
@@ -779,8 +786,9 @@ tag_invoke(evaluate_t, algorithm::dorn_t<K>, P const &p, V &&v) {
 namespace detail {
 template <std::size_t I, typename Return, typename P, typename Var>
 [[nodiscard]] constexpr auto estrin_pair(P const &p, Var const &x) {
-  return (lift_coefficient<Return>(coefficient_at<I>(p)) * x) +
-         lift_coefficient<Return>(coefficient_at<I + 1>(p));
+  return polygnition::fma(
+      lift_coefficient<Return>(coefficient_at<I>(p)), x,
+      lift_coefficient<Return>(coefficient_at<I + 1>(p)));
 }
 
 // Estrin folds adjacent coefficients into linear blocks, then recursively
@@ -887,6 +895,12 @@ template <typename T>
 template <typename T>
 [[nodiscard]] constexpr auto two_prod(T a, T b) -> eft_pair<T> {
   auto const p = a * b;
+  if constexpr (polygnition::fma_is_fused_v<T>) {
+    if (!std::is_constant_evaluated()) {
+      return {.value = p, .error = polygnition::fma(a, b, -p)};
+    }
+  }
+
   auto const as = split(a);
   auto const bs = split(b);
   auto const err = ((as.value * bs.value - p) + as.value * bs.error +
@@ -906,7 +920,7 @@ template <typename P, typename Var, typename Return, std::size_t... I>
     auto const sum =
         two_sum(product.value,
                 static_cast<Return>(coefficient_at<I + 1>(p)));
-    e = (e * xc) + (product.error + sum.error);
+    e = polygnition::fma(e, xc, product.error + sum.error);
     r = sum.value;
   }(),
    ...);
@@ -922,8 +936,13 @@ template <typename P, typename X>
   using coeff_t = typename detail::stored_polynomial_type_t<P>::value_type;
   constexpr auto degree = detail::stored_polynomial_type_t<P>::degree;
   using bound_t = std::common_type_t<double, coeff_t, std::remove_cvref_t<X>>;
-  auto constexpr ops = 2 * degree;
-  auto constexpr eps = std::numeric_limits<bound_t>::epsilon() / bound_t{2};
+  using evaluation_t = detail::eval_result_t<P, X>;
+  using roundoff_t = polygnition::scalar_value_type_t<evaluation_t>;
+  auto constexpr ops =
+      (polygnition::fma_is_fused_v<evaluation_t> ? 1 : 2) * degree;
+  auto constexpr eps =
+      static_cast<bound_t>(std::numeric_limits<roundoff_t>::epsilon()) /
+      bound_t{2};
   auto constexpr gamma = (ops * eps) / (bound_t{1} - (ops * eps));
   return gamma * detail::weighted_coefficient_sum<bound_t>(
                      p, static_cast<bound_t>(xmax),
@@ -962,7 +981,7 @@ template <typename P, typename Var, typename... Remaining>
                                       inner_return_t>;
   auto accum = return_t{};
   for (auto const &coeff : p) {
-    accum = (accum * x) + coeff(xs...);
+    accum = polygnition::fma(accum, x, coeff(xs...));
   }
   return accum;
 }

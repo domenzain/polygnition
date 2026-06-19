@@ -65,8 +65,9 @@ knuth_eve_fold(Preprocessed const &pre, S const &s, Y const &y) -> Y {
   auto out = y;
   ::polygnition::detail::static_for<I>([&]<std::size_t Step> {
     constexpr auto index = I - 1U - Step;
-    out = (out * (s - static_cast<Y>(pre.alpha[index]))) +
-          static_cast<Y>(pre.gamma[index]);
+    out = polygnition::fma(
+        out, s - static_cast<Y>(pre.alpha[index]),
+        static_cast<Y>(pre.gamma[index]));
   });
   return out;
 }

@@ -1,5 +1,7 @@
 #pragma once
 #include <array>
+#include <bit>
+#include <cmath>
 #include <complex>
 #include <concepts>
 #include <cstddef>
@@ -7,6 +9,10 @@
 #include <span>
 #include <type_traits>
 #include <utility>
+
+#if defined(__FMA__) || defined(__AVX512F__)
+#include <immintrin.h>
+#endif
 
 namespace polygnition {
 namespace detail {
@@ -72,6 +78,115 @@ inline constexpr detail::tag_invoke_t tag_invoke{};
 
 template <typename T>
 concept arithmetic = std::is_arithmetic_v<T>;
+
+namespace detail {
+template <typename T>
+inline constexpr auto has_native_fma_v = [] {
+  using value_type = std::remove_cvref_t<T>;
+  if constexpr (std::same_as<value_type, float>) {
+#if defined(FP_FAST_FMAF) || defined(__FMA__) || defined(__AVX512F__) || \
+    defined(__ARM_FEATURE_FMA) || defined(__aarch64__)
+    return true;
+#else
+    return false;
+#endif
+  } else if constexpr (std::same_as<value_type, double>) {
+#if defined(FP_FAST_FMA) || defined(__FMA__) || defined(__AVX512F__) || \
+    defined(__ARM_FEATURE_FMA) || defined(__aarch64__)
+    return true;
+#else
+    return false;
+#endif
+  } else if constexpr (std::same_as<value_type, long double>) {
+#if defined(FP_FAST_FMAL)
+    return true;
+#else
+    return false;
+#endif
+  } else {
+    return false;
+  }
+}();
+} // namespace detail
+
+template <typename T> struct fma_traits {
+  static constexpr auto is_fused = detail::has_native_fma_v<T>;
+};
+
+template <typename T>
+inline constexpr auto fma_is_fused_v =
+    fma_traits<std::remove_cvref_t<T>>::is_fused;
+
+namespace detail {
+template <typename A, typename B, typename C>
+  requires requires(A &&a, B &&b, C &&c) {
+    std::forward<A>(a) * std::forward<B>(b) + std::forward<C>(c);
+  }
+[[nodiscard]] POLYGNITION_DETAIL_ALWAYS_INLINE constexpr auto
+fma_fallback(A &&a, B &&b, C &&c)
+    noexcept(noexcept(std::forward<A>(a) * std::forward<B>(b) +
+                      std::forward<C>(c))) {
+  using a_type = std::remove_cvref_t<A>;
+  using b_type = std::remove_cvref_t<B>;
+  using c_type = std::remove_cvref_t<C>;
+
+  if constexpr (arithmetic<a_type> && arithmetic<b_type> &&
+                arithmetic<c_type>) {
+    using result_type = std::common_type_t<a_type, b_type, c_type>;
+    if constexpr (std::floating_point<result_type>) {
+      auto const lhs = static_cast<result_type>(std::forward<A>(a));
+      auto const rhs = static_cast<result_type>(std::forward<B>(b));
+      auto const addend = static_cast<result_type>(std::forward<C>(c));
+      if (std::is_constant_evaluated() ||
+          !fma_is_fused_v<result_type>) {
+        return (lhs * rhs) + addend;
+      }
+      return std::fma(lhs, rhs, addend);
+    } else {
+      return std::forward<A>(a) * std::forward<B>(b) +
+             std::forward<C>(c);
+    }
+  } else {
+    return std::forward<A>(a) * std::forward<B>(b) + std::forward<C>(c);
+  }
+}
+} // namespace detail
+
+struct fma_t {
+  template <typename A, typename B, typename C>
+    requires requires(fma_t const &self, A &&a, B &&b, C &&c) {
+      polygnition::tag_invoke(self, std::forward<A>(a), std::forward<B>(b),
+                              std::forward<C>(c));
+    }
+  [[nodiscard]] POLYGNITION_DETAIL_ALWAYS_INLINE constexpr decltype(auto)
+  operator()(A &&a, B &&b, C &&c) const
+      noexcept(noexcept(polygnition::tag_invoke(
+          *this, std::forward<A>(a), std::forward<B>(b),
+          std::forward<C>(c)))) {
+    return polygnition::tag_invoke(*this, std::forward<A>(a),
+                                   std::forward<B>(b), std::forward<C>(c));
+  }
+
+  template <typename A, typename B, typename C>
+    requires(!requires(fma_t const &self, A &&a, B &&b, C &&c) {
+               polygnition::tag_invoke(self, std::forward<A>(a),
+                                       std::forward<B>(b),
+                                       std::forward<C>(c));
+             }) &&
+            requires(A &&a, B &&b, C &&c) {
+              detail::fma_fallback(std::forward<A>(a), std::forward<B>(b),
+                                   std::forward<C>(c));
+            }
+  [[nodiscard]] POLYGNITION_DETAIL_ALWAYS_INLINE constexpr decltype(auto)
+  operator()(A &&a, B &&b, C &&c) const
+      noexcept(noexcept(detail::fma_fallback(
+          std::forward<A>(a), std::forward<B>(b), std::forward<C>(c)))) {
+    return detail::fma_fallback(std::forward<A>(a), std::forward<B>(b),
+                                std::forward<C>(c));
+  }
+};
+
+inline constexpr fma_t fma{};
 
 namespace detail {
 template <std::size_t N>
@@ -219,8 +334,60 @@ struct lanes {
       return out;
     }
   }
+
+  [[nodiscard]] friend constexpr auto tag_invoke(fma_t, lanes a, lanes b,
+                                                  lanes c) noexcept -> lanes {
+    if (!std::is_constant_evaluated()) {
+#if defined(__FMA__)
+      if constexpr (uses_native_storage && std::same_as<T, float> && W == 4) {
+        return lanes{std::bit_cast<storage_type>(_mm_fmadd_ps(
+            std::bit_cast<__m128>(a.v), std::bit_cast<__m128>(b.v),
+            std::bit_cast<__m128>(c.v)))};
+      } else if constexpr (uses_native_storage && std::same_as<T, float> &&
+                           W == 8) {
+        return lanes{std::bit_cast<storage_type>(_mm256_fmadd_ps(
+            std::bit_cast<__m256>(a.v), std::bit_cast<__m256>(b.v),
+            std::bit_cast<__m256>(c.v)))};
+      } else if constexpr (uses_native_storage && std::same_as<T, double> &&
+                           W == 2) {
+        return lanes{std::bit_cast<storage_type>(_mm_fmadd_pd(
+            std::bit_cast<__m128d>(a.v), std::bit_cast<__m128d>(b.v),
+            std::bit_cast<__m128d>(c.v)))};
+      } else if constexpr (uses_native_storage && std::same_as<T, double> &&
+                           W == 4) {
+        return lanes{std::bit_cast<storage_type>(_mm256_fmadd_pd(
+            std::bit_cast<__m256d>(a.v), std::bit_cast<__m256d>(b.v),
+            std::bit_cast<__m256d>(c.v)))};
+      }
+#endif
+#if defined(__AVX512F__)
+      if constexpr (uses_native_storage && std::same_as<T, float> && W == 16) {
+        return lanes{std::bit_cast<storage_type>(_mm512_fmadd_ps(
+            std::bit_cast<__m512>(a.v), std::bit_cast<__m512>(b.v),
+            std::bit_cast<__m512>(c.v)))};
+      } else if constexpr (uses_native_storage && std::same_as<T, double> &&
+                           W == 8) {
+        return lanes{std::bit_cast<storage_type>(_mm512_fmadd_pd(
+            std::bit_cast<__m512d>(a.v), std::bit_cast<__m512d>(b.v),
+            std::bit_cast<__m512d>(c.v)))};
+      }
+#endif
+    }
+
+    lanes out{};
+    for (auto i = std::size_t{}; i < W; ++i) {
+      auto const lhs = static_cast<T>(a.v[i]);
+      auto const rhs = static_cast<T>(b.v[i]);
+      auto const addend = static_cast<T>(c.v[i]);
+      out.v[i] = polygnition::fma(lhs, rhs, addend);
+    }
+    return out;
+  }
 };
 
+template <typename T, std::size_t W> struct fma_traits<lanes<T, W>> {
+  static constexpr auto is_fused = fma_is_fused_v<T>;
+};
 
 template <typename T>
 struct split_complex {
