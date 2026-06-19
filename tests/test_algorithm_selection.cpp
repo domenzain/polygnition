@@ -298,7 +298,9 @@ template <poly::detail::tuning_row Row,
          Degree < Row.last_degree && Row.coeff_bits == 64 &&
          Row.var_bits == 64 && Row.shape == poly::detail::coefficient_shape::any &&
          ((Intent == poly::detail::evaluation_intent::throughput &&
-           (Row.lanes == 4 || Row.lanes == 8) && Row.unroll == 4) ||
+           (Row.lanes == 4 || Row.lanes == 8) &&
+           (Row.unroll == 1 || Row.unroll == 2 || Row.unroll == 4 ||
+            Row.unroll == 8)) ||
           (Intent == poly::detail::evaluation_intent::latency && Row.lanes == 1));
 }
 

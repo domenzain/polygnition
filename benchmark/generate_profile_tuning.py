@@ -83,9 +83,34 @@ def canonical_throughput_rows(double_lanes: int) -> list[tuple[int, int, int | s
 
 CANONICAL_THROUGHPUT = {
     "generic": canonical_throughput_rows(4),
-    "x86_intel_coffee_lake": canonical_throughput_rows(4),
+    "x86_intel_coffee_lake": [
+        (32, 0, 8, "horner", 0, 2, 4),
+        (32, 8, 16, "dorn", 2, 8, 2),
+        (32, 16, 26, "dorn", 2, 8, 8),
+        (32, 26, 40, "dorn", 4, 8, 4),
+        (32, 40, 64, "dorn", 6, 8, 4),
+        (32, 64, ANY, "dorn", 6, 8, 8),
+        (64, 0, 8, "horner", 0, 4, 4),
+        (64, 8, 16, "dorn", 4, 4, 8),
+        (64, 16, 26, "dorn", 2, 8, 4),
+        (64, 26, 40, "dorn", 4, 4, 4),
+        (64, 40, 64, "dorn", 5, 4, 8),
+        (64, 64, ANY, "dorn", 2, 8, 1),
+    ],
     "x86_intel_icelake_avx512": canonical_throughput_rows(8),
-    "x86_amd_zen3": canonical_throughput_rows(4),
+    "x86_amd_zen3": [
+        (32, 0, 8, "horner", 0, 2, 1),
+        (32, 8, 16, "dorn", 2, 8, 8),
+        (32, 16, 26, "dorn", 4, 8, 8),
+        (32, 26, 40, "horner", 0, 8, 4),
+        (32, 40, ANY, "horner", 0, 8, 2),
+        (64, 0, 8, "horner", 0, 8, 8),
+        (64, 8, 16, "dorn", 2, 8, 2),
+        (64, 16, 26, "dorn", 2, 8, 1),
+        (64, 26, 40, "dorn", 4, 8, 1),
+        (64, 40, 64, "dorn", 5, 8, 1),
+        (64, 64, ANY, "dorn", 2, 8, 1),
+    ],
 }
 
 
