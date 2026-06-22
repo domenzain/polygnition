@@ -189,7 +189,8 @@ template <target::profile Profile, typename P>
 using profiled_ref = profile_view_t<Profile, P>;
 
 template <target::profile Profile, typename P>
-[[nodiscard]] constexpr auto on(P const &p) noexcept
+  requires std::is_lvalue_reference_v<P &&>
+[[nodiscard]] constexpr auto on(P &&p) noexcept
     -> profile_view_t<Profile, std::remove_cvref_t<P>> {
   return {&p};
 }

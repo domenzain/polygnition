@@ -4,7 +4,7 @@
 #include <complex>
 #include <cstddef>
 #include <polygnition/arithmetic.hpp>
-#include <polygnition/poly.hpp>
+#include <polygnition/prepared.hpp>
 #include <span>
 #include <utility>
 
@@ -71,6 +71,12 @@ polygnition_codegen_automatic_degree20(double x) {
 }
 
 extern "C" [[gnu::noinline, gnu::used]] double
+polygnition_codegen_prepared_degree20(double x) {
+  constexpr auto evaluator = poly::prepare(poly::automatic, make_literal<20>());
+  return evaluator(x);
+}
+
+extern "C" [[gnu::noinline, gnu::used]] double
 polygnition_codegen_automatic_degree48(double x) {
   constexpr auto p = make_literal<48>();
   return p(x);
@@ -123,6 +129,14 @@ polygnition_codegen_batch_automatic_degree20(double const *xs, double *out,
   constexpr auto p = make_literal<20>();
   (void)poly::evaluate(poly::automatic, p, std::span<double const>{xs, n},
                        std::span<double>{out, n});
+}
+
+extern "C" [[gnu::noinline, gnu::used]] void
+polygnition_codegen_batch_prepared_degree20(double const *xs, double *out,
+                                            std::size_t n) {
+  constexpr auto evaluator = poly::prepare(poly::automatic, make_literal<20>());
+  (void)poly::evaluate_into(evaluator, std::span<double const>{xs, n},
+                            std::span<double>{out, n});
 }
 
 extern "C" [[gnu::noinline, gnu::used]] void

@@ -104,6 +104,7 @@ def check(args, build_dir: Path):
     runtime_motzkin = function_body(assembly, "polygnition_codegen_runtime_motzkin")
     automatic_degree12 = function_body(assembly, "polygnition_codegen_automatic_degree12")
     automatic_degree20 = function_body(assembly, "polygnition_codegen_automatic_degree20")
+    prepared_degree20 = function_body(assembly, "polygnition_codegen_prepared_degree20")
     automatic_degree48 = function_body(assembly, "polygnition_codegen_automatic_degree48")
     complex_coeff_real_horner = function_body(
         assembly, "polygnition_codegen_complex_coeff_real_horner")
@@ -114,6 +115,8 @@ def check(args, build_dir: Path):
     estrin_degree20 = function_body(assembly, "polygnition_codegen_estrin_degree20")
     batch_automatic_degree20 = function_body(
         assembly, "polygnition_codegen_batch_automatic_degree20")
+    batch_prepared_degree20 = function_body(
+        assembly, "polygnition_codegen_batch_prepared_degree20")
     batch_automatic_float_degree20 = function_body(
         assembly, "polygnition_codegen_batch_automatic_float_degree20")
     batch_preprocessed_motzkin = function_body(
@@ -143,6 +146,10 @@ def check(args, build_dir: Path):
             "automatic high-degree real evaluation did not lower to Dorn FMA chains")
     reject(r"\b(call|j[a-z]+)\b", automatic_degree20,
            "automatic high-degree Dorn evaluation should be straight-line code")
+    if (instruction_mnemonics(prepared_degree20) !=
+            instruction_mnemonics(automatic_degree20)):
+        raise AssertionError(
+            "prepared point evaluation no longer matches direct evaluation")
     if count_fma(complex_coeff_real_horner) < 6:
         raise AssertionError(
             "complex-coefficient Horner at a real point should lower to scalar FMA chains")
@@ -170,6 +177,10 @@ def check(args, build_dir: Path):
             "automatic batch evaluation should lower to packed FMA instructions")
     reject(r"\bcall\b", batch_automatic_degree20,
            "automatic batch evaluation should inline the vectorized loop body")
+    if (instruction_mnemonics(batch_prepared_degree20) !=
+            instruction_mnemonics(batch_automatic_degree20)):
+        raise AssertionError(
+            "prepared batch evaluation no longer matches direct evaluation")
     require(r"\bvfmadd\w*ps\b.*[xyz]mm", batch_automatic_float_degree20,
             "automatic float batch evaluation should lower to packed FMA instructions")
     reject(r"\bcall\b", batch_automatic_float_degree20,

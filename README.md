@@ -80,25 +80,20 @@ If the coefficients are calibrated at runtime, preprocess once and keep the
 pixel loop to the evaluation itself:
 
 ```cpp
-#include <polygnition/poly.hpp>
+#include <polygnition/prepared.hpp>
 
 namespace poly = polygnition::polynomial;
 
-struct radial_model_t {
-  poly::motzkin_preprocessed_t<double> scale;
-
-  [[nodiscard]] constexpr auto operator()(double const q) const -> double {
-    return scale(q);
-  }
-};
-
 [[nodiscard]] constexpr auto make_radial_model(double const k1, double const k2,
-                                               double const k3, double const k4)
-    -> radial_model_t {
-  return {.scale = poly::preprocess_motzkin(
-              poly::polynomial_t{k4, k3, k2, k1, 1.0})};
+                                               double const k3, double const k4) {
+  return poly::prepare(poly::motzkin,
+                       poly::polynomial_t{k4, k3, k2, k1, 1.0});
 }
 ```
+
+`prepare` owns its representation. The Motzkin overload is the only built-in
+representation change: a runtime quartic is preprocessed once. Direct
+`evaluate` calls remain unchanged.
 
 ### 2. Filter sweeps: complex polynomial ratios on the unit circle
 
@@ -203,6 +198,21 @@ static_assert(expansion.derivative<1>() == 6.0);
 | `poly::compensated` | Error-free-transform Horner for users who want a high-accuracy explicit path while staying constexpr-friendly in C++23. |
 | `poly::multivariate_horner` | Polynomials whose coefficients are themselves callable polynomials. |
 
+`polygnition/prepared.hpp` adds only an opt-in bound evaluator:
+
+```cpp
+auto owned = poly::prepare(poly::automatic, p); // owns p
+auto view = poly::borrow(poly::horner, p);       // lvalues only
+
+auto const y = owned(x);
+poly::evaluate_into(owned, xs, out);
+```
+
+The evaluator is exactly an algorithm and a representation, both
+`[[no_unique_address]]`. There is no plan object or policy state. Static
+polynomials remain one byte, borrowing stores one pointer, and users who include
+only `poly.hpp` see none of this surface.
+
 The selection table is data-driven. `selection_key` includes value categories,
 storage, intent, degree, element widths, SIMD lane count, and coefficient shape;
 Knuth, Motzkin, leading-zero demotion, Dorn, Estrin, and Horner rows all pass
@@ -248,9 +258,11 @@ static degree and every stored coefficient are part of the representation and
 comparison. Use `poly::same_polynomial(a, b)` when extra stored leading zeros
 should be ignored.
 
-Batch evaluation is available through the same CPO:
-`poly::evaluate(strategy, p, xs, out)` for sized contiguous ranges, or the
-explicit `std::span` form when that is clearer. `xs.size() == out.size()` is a
+Batch evaluation remains available through `poly::evaluate(strategy, p, xs,
+out)`. Including `polygnition/batch.hpp` also provides the clearer
+`poly::evaluate_into(...)` spelling; it forwards to the same implementation.
+Both accept sized contiguous ranges or explicit `std::span` values.
+`xs.size() == out.size()` is a
 precondition enforced by the library; mismatches throw `std::invalid_argument`
 rather than silently truncating. The generic adapter is constrained on scalar
 evaluability, so explicit strategies, preprocessed strategy objects, and
